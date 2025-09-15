@@ -5,4 +5,4 @@ python-dotenv
 pynput
 pyaudio
 gtts
-playsound
+playsound==1.2.2

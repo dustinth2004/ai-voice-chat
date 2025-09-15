@@ -1,3 +1,4 @@
+"""A voice chat application that uses OpenAI and ElevenLabs to provide a voice-based interface to a chatbot."""
 import os
 import re
 import wave
@@ -51,22 +52,47 @@ Refer to yourself and the user as 3rd person only, by name, and in the past tens
 
 
 class SilenceStdErr:
-    """Context manager to silence stderr.
+    """A context manager to silence stderr.
 
-    Useful for silencing pyaudio warnings.
+    This is used to suppress the warnings that PyAudio prints to the console.
+
+    Attributes:
+        _stderr: A file descriptor for the original stderr.
     """
 
     def __enter__(self):
+        """Redirects stderr to /dev/null."""
         self._stderr = os.dup(2)
         os.close(2)
         os.open(os.devnull, os.O_RDWR)
 
     def __exit__(self, exc_type, exc_val, exc_tb):
+        """Restores stderr to its original state.
+
+        Args:
+            exc_type: The exception type.
+            exc_val: The exception value.
+            exc_tb: The traceback.
+        """
         os.dup2(self._stderr, 2)
 
 
 class VoiceChat:
+    """A class to manage a voice chat session.
+
+    This class handles audio recording, speech-to-text, chatbot interaction,
+    and text-to-speech.
+
+    Attributes:
+        conversation_dir: The directory where conversation logs and audio are saved.
+    """
     def __init__(self, openai_key, elevenlabs_key):
+        """Initializes the VoiceChat session.
+
+        Args:
+            openai_key: The OpenAI API key.
+            elevenlabs_key: The ElevenLabs API key.
+        """
         self._model = "gpt-3.5-turbo"
         openai.api_key = openai_key
         self._elevenlabs_key = elevenlabs_key
@@ -115,10 +141,11 @@ class VoiceChat:
         )
 
     def run(self):
-        """Block and wait for user to hold record_key to record audio.
+        """Starts the voice chat application.
 
-        After space bar is released, send audio to openai whisper api for speach-to-text,
-        send text to gpt turbo, get completion and send to 11labs for TTS, then playback.
+        This method handles the main loop of the application, including voice
+        selection, keyboard input, and coordinating the various components of
+        the voice chat.
         """
         try:
             voices = self._get_voices()
@@ -205,6 +232,11 @@ class VoiceChat:
         self._summarize_conversation()
 
     def _on_press(self, key):
+        """Handles key press events.
+
+        Args:
+            key: The key that was pressed.
+        """
         if key == keyboard.Key.space:
             self._record_key_pressed = True
         elif key == keyboard.KeyCode.from_char("p"):
@@ -231,16 +263,29 @@ class VoiceChat:
             print(f"Sentence pause: {self._sentence_pause:.1f}")
 
     def _on_release(self, key):
+        """Handles key release events.
+
+        Args:
+            key: The key that was released.
+        """
         if key == keyboard.Key.space:
             self._record_key_pressed = False
 
     def _get_voices(self):
-        """Gets a list of voices from 11labs."""
+        """Gets a list of available voices from the ElevenLabs API.
+
+        Returns:
+            A list of voices, where each voice is a dictionary of properties.
+        """
         response = self._11l_session.get(f"{self._11l_url}/voices")
         return response.json()["voices"]
 
     def _record(self):
-        """Starts recording and continues until record key is released."""
+        """Records audio from the microphone until the record key is released.
+
+        Returns:
+            The path to the recorded audio file.
+        """
         print()
         stream = self._pa.open(
             format=pyaudio.paInt16,
@@ -263,7 +308,14 @@ class VoiceChat:
         return file
 
     def _write_wav(self, frames):
-        """Writes audio frames to a wave file."""
+        """Writes audio frames to a .wav file.
+
+        Args:
+            frames: A list of audio frames.
+
+        Returns:
+            The path to the written .wav file.
+        """
         wav_path = self.conversation_dir + f"/{len(self._messages)}.wav"
         wf = wave.open(wav_path, "wb")
         wf.setnchannels(1)
@@ -274,7 +326,14 @@ class VoiceChat:
         return wav_path
 
     def _speech_to_text(self, file):
-        """Uploads audio data to whisper and returns the recognized text."""
+        """Transcribes audio to text using the OpenAI Whisper API.
+
+        Args:
+            file: The path to the audio file.
+
+        Returns:
+            The transcribed text.
+        """
         prompt = "The following is a recording of a human speaking to a chat bot:\n\n"
         with open(file, "rb") as f:
             transcript = openai.Audio.transcribe("whisper-1", f, prompt=prompt)
@@ -283,7 +342,14 @@ class VoiceChat:
         return transcript["text"]
 
     def _speech_to_text_local(self, file):
-        """Uses faster-whisper to locally transcribe audio data."""
+        """Transcribes audio to text locally using faster-whisper.
+
+        Args:
+            file: The path to the audio file.
+
+        Returns:
+            The transcribed text.
+        """
         segments, _ = self._whisper_model.transcribe(file, vad_filter=True)
         # Note: segments is a generator, so processing happens next line
         transcript = "".join(s.text for s in segments).strip()
@@ -291,7 +357,16 @@ class VoiceChat:
         return transcript
 
     def _chat(self, transcript, suppress_output=False, max_tokens=None):
-        """Send transcript to gpt turbo and return completion."""
+        """Sends a transcript to the chatbot and gets a response.
+
+        Args:
+            transcript: The user's message to the chatbot.
+            suppress_output: Whether to suppress printing the response to the console.
+            max_tokens: The maximum number of tokens to generate.
+
+        Returns:
+            The chatbot's response.
+        """
         self._terminate_requested = False
         self._messages.append({"role": "user", "content": transcript})
         completion = openai.ChatCompletion.create(
@@ -359,7 +434,17 @@ class VoiceChat:
         return message["content"]
 
     def _text_to_speech(self, text):
-        """Send text to 11labs and returns audio."""
+        """Converts text to speech using ElevenLabs or Google TTS.
+
+        Args:
+            text: The text to convert to speech.
+
+        Returns:
+            The path to the generated audio file.
+
+        Raises:
+            ValueError: If the API returns an unexpected content type.
+        """
         index = len(self._messages) - 1
         if index <= self._last_conversation_index:
             index = self._last_conversation_index + 0.01
@@ -393,7 +478,12 @@ class VoiceChat:
             raise ValueError("Invalid content-type, expected audio/mpeg")
 
     def _11l_threadbody(self):
-        """Thread body for TTS."""
+        """The thread body for the text-to-speech queue.
+
+        This method runs in a separate thread and processes sentences from the
+        TTS queue, converting them to audio and putting them in the playback
+        queue.
+        """
         while True:
             sentence = self._11l_queue.get()
             if sentence == "#done":
@@ -415,12 +505,20 @@ class VoiceChat:
                 self._playback_queue.put(file)
 
     def _playback(self, file):
-        """Plays back an audio/mpeg stream."""
+        """Plays an audio file.
+
+        Args:
+            file: The path to the audio file to play.
+        """
         playsound(file, block=True)
         sleep(self._sentence_pause)
 
     def _playback_threadbody(self):
-        """Thread body for playback."""
+        """The thread body for the playback queue.
+
+        This method runs in a separate thread and plays audio files from the
+        playback queue.
+        """
         while True:
             file = self._playback_queue.get()
             if file == "#done":
@@ -434,7 +532,7 @@ class VoiceChat:
                 break
 
     def _summarize_conversation(self):
-        """Summarizes the conversation for storing context for next time."""
+        """Summarizes the conversation and saves it to a file."""
         if len(self._messages) < 3:
             return
 
@@ -447,7 +545,12 @@ class VoiceChat:
                 f.write(f"{message['role']}: {message['content']}\n\n")
 
     def _get_previous_summary(self):
-        """Returns the previous summary if it exists."""
+        """Gets the summary of the previous conversation from a file.
+
+        Returns:
+            The summary of the previous conversation, or None if no summary
+            is found.
+        """
         if os.path.exists(self._summary_file):
             with open(self._summary_file, "r") as f:
                 return f.read()
